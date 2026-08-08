@@ -99,7 +99,7 @@
               "",
               "pm.test('Evento retornado tem o ID esperado', function () {",
               "    const json = pm.response.json();",
-              "    pm.expect(String(json.id)).to.eql(pm.collectionVariables.get('eventoId'));",
+              "    pm.expect(String(json.id)).to.eql(String(pm.collectionVariables.get('eventoId')));",
               "});"
             ]
           }
