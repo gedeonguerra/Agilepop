@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build, testes unitários e cobertura (JaCoCo)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Build + testes + relatório JaCoCo
+        run: mvn -B clean verify
+
+      - name: Publicar relatório de cobertura (JaCoCo)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+
+      - name: Publicar resultados dos testes
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+
+      - name: Gerar pacote da aplicação (jar)
+        run: mvn -B -DskipTests package
+
+      - name: Upload do jar da aplicação
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+
+  api-tests:
+    name: Testes de API (Postman/Newman)
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Baixar jar da aplicação
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: target/
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Newman
+        run: npm install -g newman
+
+      - name: Subir a aplicação em background
+        run: |
+          JAR_FILE=$(ls target/*.jar | head -n 1)
+          nohup java -jar "$JAR_FILE" > app.log 2>&1 &
+          echo "Aguardando a aplicação iniciar..."
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/eventos | grep -q "200"; then
+              echo "Aplicação disponível."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Aplicação não respondeu a tempo."
+          cat app.log
+          exit 1
+
+      - name: Rodar collection Postman com Newman
+        run: |
+          newman run postman/AgilePopApi.postman_collection.json \
+            --env-var "baseUrl=http://localhost:8080" \
+            --reporters cli,junit \
+            --reporter-junit-export newman-report.xml
+
+      - name: Publicar relatório do Newman
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newman-report
+          path: newman-report.xml
+
+      - name: Exibir logs da aplicação em caso de falha
+        if: failure()
+        run: cat app.log
